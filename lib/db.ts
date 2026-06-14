@@ -65,12 +65,18 @@ async function redisGet(): Promise<DB> {
   const { Redis } = await import("@upstash/redis");
   const redis = new Redis({ url: process.env.KV_REST_API_URL!, token: process.env.KV_REST_API_TOKEN! });
   const data = await redis.get<DB>(REDIS_KEY);
-  if (!data) {
-    const d = defaultDB();
-    await redis.set(REDIS_KEY, d);
-    return d;
-  }
-  return data;
+if (!data) {
+  const d = defaultDB();
+  await redis.set(REDIS_KEY, d);
+  return d;
+}
+// Pastikan semua array tetap array
+const db = data as DB;
+if (!Array.isArray(db.members)) db.members = [];
+if (!Array.isArray(db.rewards)) db.rewards = [];
+if (!Array.isArray(db.transactions)) db.transactions = [];
+if (!Array.isArray(db.settings)) db.settings = [];
+return db;
 }
 async function redisSet(db: DB) {
   const { Redis } = await import("@upstash/redis");
