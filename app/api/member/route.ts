@@ -8,7 +8,7 @@ export async function GET(req: NextRequest) {
   const member = getMemberByPhone(phone);
   if (!member) return NextResponse.json({ error: "Member tidak ditemukan" }, { status: 404 });
 
-  const history = getMemberTransactions(member.id);
+  const history = getMemberTransactions(member!.id);
   return NextResponse.json({
     member,
     history,
