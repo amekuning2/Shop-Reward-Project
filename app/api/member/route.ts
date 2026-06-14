@@ -23,5 +23,3 @@ export async function POST(req: NextRequest) {
   const member = await createMember(phone, name);
   return NextResponse.json({ member });
 }
-
-# fix all errors in this file and make sure it works with the latest version of nextjs and typescript
