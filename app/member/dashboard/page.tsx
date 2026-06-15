@@ -24,7 +24,10 @@ export default function MemberDashboard() {
     if (!mRes.ok) { localStorage.removeItem("memberPhone"); router.push("/member"); return; }
     const mData = await mRes.json();
     const rData = await rRes.json();
-    setMember(mData.member); setHistory(mData.history); setShopName(mData.shopName); setRewards(rData.rewards);
+
+    console.log("MEMBER API", mData);
+    console.log("REWARDS API", rData);
+    setMember(mData.member ?? null); setHistory(Array.isArray(mData.history) ? mData.history : []); setShopName(mData.shopName ?? "Otoko Coffee"); setRewards(Array.isArray(rData.rewards) ? rData.rewards : []);
   }
 
   useEffect(() => {
@@ -54,7 +57,11 @@ export default function MemberDashboard() {
     </div>
   );
 
-  const nextReward = rewards.filter(r => r.points_required > member.points).sort((a, b) => a.points_required - b.points_required)[0];
+  const safeRewards = Array.isArray(rewards) ? rewards : [];
+
+  const nextReward = safeRewards
+    .filter(r => r.points_required > member.points)
+    .sort((a, b) => a.points_required - b.points_required)[0];
 
   return (
     <div className="page">
@@ -100,8 +107,8 @@ export default function MemberDashboard() {
 
         <section style={{ marginTop: 32 }}>
           <div className="kanji-divider">報酬 &nbsp; Reward</div>
-          {rewards.length === 0 && <p className="muted">Belum ada reward tersedia.</p>}
-          {rewards.map(r => {
+          {safeRewards.length === 0 && <p className="muted">Belum ada reward tersedia.</p>}
+          {safeRewards.map(r => {
             const unlocked = member.points >= r.points_required;
             return (
               <div key={r.id} className={`reward-card ${unlocked ? "" : "locked"}`}>
@@ -125,7 +132,8 @@ export default function MemberDashboard() {
           <div className="kanji-divider">履歴 &nbsp; Riwayat</div>
           <div className="card">
             {history.length === 0 && <p className="muted">Belum ada transaksi.</p>}
-            {history.map(tx => (
+            {Array.isArray(history) &&
+              history.map(tx => (
               <div key={tx.id} className="list-item">
                 <div>
                   <p style={{ margin: 0, fontWeight: 500 }}>
