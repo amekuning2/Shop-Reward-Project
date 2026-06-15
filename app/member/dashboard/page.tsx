@@ -5,9 +5,9 @@ import Link from "next/link";
 import Image from "next/image";
 import StampCard from "@/components/StampCard";
 
-type Member = { id: number; phone: string; name: string; points: number };
-type Tx = { id: number; type: string; amount: number; points_delta: number; reward_name: string | null; note: string | null; created_at: string; };
-type Reward = { id: number; name: string; description: string; points_required: number; active: number; };
+type Member = { id: string; phone: string; name: string; points: number; stampCount: number; createdAt: string; };
+type Tx = { id: string; type: string; amount: number; points: number; rewardName: string | null; staffNote: string | null; created_at: string; };
+type Reward = { id: string; name: string; description: string; pointsCost: number; active: boolean; };
 
 export default function MemberDashboard() {
   const router = useRouter();
@@ -36,7 +36,7 @@ export default function MemberDashboard() {
     loadAll(phone);
   }, []);
 
-  async function handleRedeem(rewardId: number) {
+  async function handleRedeem(rewardId: string) {
     if (!member) return;
     setError(""); setRedeeming(rewardId);
     try {
@@ -60,8 +60,8 @@ export default function MemberDashboard() {
   const safeRewards = Array.isArray(rewards) ? rewards : [];
 
   const nextReward = safeRewards
-    .filter(r => r.points_required > member.points)
-    .sort((a, b) => a.points_required - b.points_required)[0];
+    .filter(r => r.pointsCost > member.points)
+    .sort((a, b) => a.pointsCost - b.pointsCost)[0];
 
   return (
     <div className="page">
@@ -88,7 +88,7 @@ export default function MemberDashboard() {
           <p style={{ color: "var(--otoko-gold-2)", margin: 0, fontSize: "0.8rem", letterSpacing: "0.12em", textTransform: "uppercase", position: "relative", zIndex: 1 }}>
             poin terkumpul
           </p>
-          <StampCard points={member.points} target={nextReward ? nextReward.points_required : null} nextRewardName={nextReward?.name} />
+          <StampCard points={member.points} target={nextReward ? nextReward.pointsCost : null} nextRewardName={nextReward?.name} />
         </div>
 
         {redeemResult && (
@@ -109,7 +109,7 @@ export default function MemberDashboard() {
           <div className="kanji-divider">報酬 &nbsp; Reward</div>
           {safeRewards.length === 0 && <p className="muted">Belum ada reward tersedia.</p>}
           {safeRewards.map(r => {
-            const unlocked = member.points >= r.points_required;
+            const unlocked = member.points >= r.pointsCost;
             return (
               <div key={r.id} className={`reward-card ${unlocked ? "" : "locked"}`}>
                 <div>
@@ -117,7 +117,7 @@ export default function MemberDashboard() {
                   <p className="muted" style={{ margin: 0 }}>{r.description}</p>
                 </div>
                 <div style={{ textAlign: "right", flexShrink: 0 }}>
-                  <p className="pill pill-gold" style={{ marginBottom: 8, display: "inline-block" }}>{r.points_required} poin</p>
+                  <p className="pill pill-gold" style={{ marginBottom: 8, display: "inline-block" }}>{r.pointsCost} poin</p>
                   <br />
                   <button className="btn btn-gold btn-sm" disabled={!unlocked || redeeming === r.id} onClick={() => handleRedeem(r.id)}>
                     {redeeming === r.id ? "Memproses..." : unlocked ? "Tukar" : "Belum cukup"}
