@@ -1,170 +1,291 @@
-/**
- * db.ts — Upstash Redis + local JSON fallback
- * Production (Vercel): pakai @upstash/redis via KV_REST_API_URL + KV_REST_API_TOKEN
- * Local dev: pakai JSON file
- */
+// lib/db.ts
+import { Redis } from "@upstash/redis";
 
-import fs from "fs";
-import path from "path";
-
-export type Member = { id: number; phone: string; name: string; points: number; created_at: string; };
-export type Reward = { id: number; name: string; description: string; points_required: number; active: number; };
-export type Transaction = { id: number; member_id: number; type: "earn" | "redeem"; amount: number; points_delta: number; reward_name: string | null; note: string | null; created_at: string; };
-type DB = { settings: { key: string; value: string }[]; members: Member[]; rewards: Reward[]; transactions: Transaction[]; _seq: { members: number; rewards: number; transactions: number }; };
-
-function now() { return new Date().toISOString().replace("T", " ").substring(0, 19); }
-
-const IS_VERCEL = !!process.env.KV_REST_API_URL;
 const REDIS_KEY = "otoko:db";
 
-function defaultDB(): DB {
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+export interface Member {
+  id: string;
+  phone: string;
+  name: string;
+  points: number;
+  stampCount: number;
+  createdAt: string;
+}
+
+export interface Reward {
+  id: string;
+  name: string;
+  pointsCost: number;
+  description: string;
+  active: boolean;
+}
+
+export interface Transaction {
+  id: string;
+  memberId: string;
+  memberPhone: string;
+  memberName: string;
+  type: "earn" | "redeem";
+  amount: number;      // Rp amount (for earn), 0 for redeem
+  points: number;      // points earned or spent
+  rewardId?: string;
+  rewardName?: string;
+  redeemCode?: string;
+  staffNote?: string;
+  createdAt: string;
+}
+
+export interface RedeemCode {
+  code: string;
+  memberId: string;
+  rewardId: string;
+  rewardName: string;
+  pointsCost: number;
+  used: boolean;
+  createdAt: string;
+  usedAt?: string;
+}
+
+export interface Settings {
+  pointsPerRupiah: number;   // e.g. 10000 → 1 point per Rp10.000
+  stampPerCycle: number;     // stamps needed for one cycle (default 10)
+  pointsPerStamp: number;    // points per stamp (default 1)
+}
+
+export interface DB {
+  settings: Settings;
+  members: Member[];
+  rewards: Reward[];
+  transactions: Transaction[];
+  redeemCodes: RedeemCode[];
+  _seq: number;
+}
+
+// ─── Default data ─────────────────────────────────────────────────────────────
+
+const DEFAULT_DB: DB = {
+  settings: {
+    pointsPerRupiah: 10000,
+    stampPerCycle: 10,
+    pointsPerStamp: 1,
+  },
+  members: [],
+  rewards: [
+    { id: "r1", name: "Upsize Gratis", pointsCost: 15, description: "Upgrade ukuran minuman kamu gratis!", active: true },
+    { id: "r2", name: "Free Americano", pointsCost: 30, description: "Segelas Americano dingin atau panas.", active: true },
+    { id: "r3", name: "Free Pastry", pointsCost: 50, description: "Pilih pastry favorit kamu.", active: true },
+    { id: "r4", name: "Diskon 20%", pointsCost: 80, description: "Diskon 20% untuk total pembelian.", active: true },
+    { id: "r5", name: "Free Signature Drink", pointsCost: 120, description: "Minuman signature Otoko Coffee pilihanmu.", active: true },
+  ],
+  transactions: [],
+  redeemCodes: [],
+  _seq: 0,
+};
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function ensureArrays(db: any): DB {
   return {
-    settings: [
-      { key: "points_per_idr", value: "10000" },
-      { key: "shop_name", value: "Otoko Coffee Shop" },
-    ],
-    rewards: [
-      { id: 1, name: "Upsize Gratis", description: "Upgrade ukuran minuman apa saja, gratis", points_required: 15, active: 1 },
-      { id: 2, name: "Free Americano (Reg)", description: "Tukar 1 cup Americano regular gratis", points_required: 30, active: 1 },
-      { id: 3, name: "Free Pastry", description: "Tukar 1 pastry pilihan (croissant/donut)", points_required: 50, active: 1 },
-      { id: 4, name: "Diskon 20% Bill", description: "Potongan 20% untuk total transaksi", points_required: 80, active: 1 },
-      { id: 5, name: "Free Signature Drink", description: "Tukar 1 signature drink pilihan toko", points_required: 120, active: 1 },
-    ],
-    members: [
-      { id: 1, phone: "081234567890", name: "Dewi Anggraini", points: 42, created_at: now() },
-      { id: 2, phone: "081298765432", name: "Rian Pratama", points: 18, created_at: now() },
-      { id: 3, phone: "082211223344", name: "Siti Nurhaliza", points: 95, created_at: now() },
-      { id: 4, phone: "085677889900", name: "Budi Santoso", points: 130, created_at: now() },
-      { id: 5, phone: "087712340099", name: "Ayu Lestari", points: 5, created_at: now() },
-    ],
-    transactions: [
-      { id: 1, member_id: 1, type: "earn", amount: 45000, points_delta: 4, reward_name: null, note: "Seed", created_at: now() },
-      { id: 2, member_id: 1, type: "earn", amount: 38000, points_delta: 3, reward_name: null, note: "Seed", created_at: now() },
-      { id: 3, member_id: 2, type: "earn", amount: 28000, points_delta: 2, reward_name: null, note: "Seed", created_at: now() },
-      { id: 4, member_id: 3, type: "earn", amount: 50000, points_delta: 5, reward_name: null, note: "Seed", created_at: now() },
-      { id: 5, member_id: 4, type: "earn", amount: 75000, points_delta: 7, reward_name: null, note: "Seed", created_at: now() },
-      { id: 6, member_id: 5, type: "earn", amount: 50000, points_delta: 5, reward_name: null, note: "Seed", created_at: now() },
-    ],
-    _seq: { members: 5, rewards: 5, transactions: 6 },
+    settings: db.settings ?? DEFAULT_DB.settings,
+    members: Array.isArray(db.members) ? db.members : [],
+    rewards: Array.isArray(db.rewards) ? db.rewards : DEFAULT_DB.rewards,
+    transactions: Array.isArray(db.transactions) ? db.transactions : [],
+    redeemCodes: Array.isArray(db.redeemCodes) ? db.redeemCodes : [],
+    _seq: typeof db._seq === "number" ? db._seq : 0,
   };
 }
 
-// ---- Local JSON ----
-const DATA_DIR = path.join(process.cwd(), "data");
-const DB_FILE = path.join(DATA_DIR, "db.json");
-
-function localLoad(): DB {
-  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-  if (!fs.existsSync(DB_FILE)) { const d = defaultDB(); fs.writeFileSync(DB_FILE, JSON.stringify(d, null, 2)); return d; }
-  return JSON.parse(fs.readFileSync(DB_FILE, "utf-8"));
-}
-function localSave(db: DB) { fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2)); }
-
-// ---- Upstash Redis ----
-async function redisGet(): Promise<DB> {
-  const { Redis } = await import("@upstash/redis");
-  const redis = new Redis({ url: process.env.KV_REST_API_URL!, token: process.env.KV_REST_API_TOKEN! });
-  const data = await redis.get<DB>(REDIS_KEY);
-if (!data) {
-  const d = defaultDB();
-  await redis.set(REDIS_KEY, d);
-  return d;
-}
-// Pastikan semua array tetap array
-const db = data as DB;
-if (!Array.isArray(db.members)) db.members = [];
-if (!Array.isArray(db.rewards)) db.rewards = [];
-if (!Array.isArray(db.transactions)) db.transactions = [];
-if (!Array.isArray(db.settings)) db.settings = [];
-return db;
-}
-async function redisSet(db: DB) {
-  const { Redis } = await import("@upstash/redis");
-  const redis = new Redis({ url: process.env.KV_REST_API_URL!, token: process.env.KV_REST_API_TOKEN! });
-  await redis.set(REDIS_KEY, db);
+function nextId(db: DB, prefix: string): string {
+  db._seq = (db._seq || 0) + 1;
+  return `${prefix}${db._seq}`;
 }
 
-async function load(): Promise<DB> { return IS_VERCEL ? redisGet() : localLoad(); }
-async function save(db: DB) { IS_VERCEL ? await redisSet(db) : localSave(db); }
+// ─── Storage layer ────────────────────────────────────────────────────────────
 
-// ---- Public API ----
-export async function getSetting(key: string, fallback = ""): Promise<string> {
-  const db = await load();
-  return db.settings.find(s => s.key === key)?.value ?? fallback;
+let redis: Redis | null = null;
+
+function getRedis(): Redis | null {
+  if (redis) return redis;
+  if (process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN) {
+    redis = new Redis({
+      url: process.env.KV_REST_API_URL,
+      token: process.env.KV_REST_API_TOKEN,
+    });
+    return redis;
+  }
+  return null;
 }
 
-export async function getMemberByPhone(phone: string): Promise<Member | undefined> {
-  return (await load()).members.find(m => m.phone === phone);
+// JSON file fallback for local dev
+async function localRead(): Promise<DB> {
+  try {
+    const fs = await import("fs/promises");
+    const path = await import("path");
+    const filePath = path.join(process.cwd(), "data", "db.json");
+    const raw = await fs.readFile(filePath, "utf-8");
+    return ensureArrays(JSON.parse(raw));
+  } catch {
+    return { ...DEFAULT_DB };
+  }
+}
+
+async function localWrite(db: DB): Promise<void> {
+  const fs = await import("fs/promises");
+  const path = await import("path");
+  const dir = path.join(process.cwd(), "data");
+  await fs.mkdir(dir, { recursive: true });
+  await fs.writeFile(path.join(dir, "db.json"), JSON.stringify(db, null, 2));
+}
+
+// ─── Public API ───────────────────────────────────────────────────────────────
+
+export async function readDB(): Promise<DB> {
+  const r = getRedis();
+  if (r) {
+    try {
+      const raw = await r.get(REDIS_KEY);
+      if (!raw) return { ...DEFAULT_DB };
+
+      // Redis might return string or already-parsed object
+      let parsed: any;
+      if (typeof raw === "string") {
+        parsed = JSON.parse(raw);
+      } else {
+        parsed = raw;
+      }
+      return ensureArrays(parsed);
+    } catch (e) {
+      console.error("[db] Redis read error:", e);
+      return { ...DEFAULT_DB };
+    }
+  }
+  return localRead();
+}
+
+export async function writeDB(db: DB): Promise<void> {
+  const r = getRedis();
+  if (r) {
+    try {
+      await r.set(REDIS_KEY, JSON.stringify(db));
+    } catch (e) {
+      console.error("[db] Redis write error:", e);
+    }
+    return;
+  }
+  await localWrite(db);
+}
+
+// ─── Member operations ────────────────────────────────────────────────────────
+
+export async function getMemberByPhone(phone: string): Promise<Member | null> {
+  const db = await readDB();
+  return db.members.find((m) => m.phone === phone) ?? null;
 }
 
 export async function createMember(phone: string, name: string): Promise<Member> {
-  const db = await load();
-  db._seq.members += 1;
-  const member: Member = { id: db._seq.members, phone, name, points: 0, created_at: now() };
+  const db = await readDB();
+  const member: Member = {
+    id: nextId(db, "m"),
+    phone,
+    name,
+    points: 0,
+    stampCount: 0,
+    createdAt: new Date().toISOString(),
+  };
   db.members.push(member);
-  await save(db);
+  await writeDB(db);
   return member;
 }
 
-export async function updateMemberPoints(id: number, delta: number): Promise<Member> {
-  const db = await load();
-  const m = db.members.find(m => m.id === id)!;
-  m.points += delta;
-  await save(db);
-  return m;
+export async function updateMember(id: string, updates: Partial<Member>): Promise<Member | null> {
+  const db = await readDB();
+  const idx = db.members.findIndex((m) => m.id === id);
+  if (idx === -1) return null;
+  db.members[idx] = { ...db.members[idx], ...updates };
+  await writeDB(db);
+  return db.members[idx];
 }
 
-export async function searchMembers(q: string): Promise<Member[]> {
-  const db = await load();
-  if (!q) return [...db.members].sort((a, b) => b.id - a.id).slice(0, 25);
-  const lower = q.toLowerCase();
-  return db.members.filter(m => m.phone.includes(q) || m.name.toLowerCase().includes(lower)).slice(0, 25);
+// ─── Transaction operations ───────────────────────────────────────────────────
+
+export async function addTransaction(tx: Omit<Transaction, "id" | "createdAt">): Promise<Transaction> {
+  const db = await readDB();
+  const transaction: Transaction = {
+    ...tx,
+    id: nextId(db, "tx"),
+    createdAt: new Date().toISOString(),
+  };
+  db.transactions.push(transaction);
+  await writeDB(db);
+  return transaction;
 }
 
-export async function getMemberTransactions(memberId: number): Promise<Transaction[]> {
-  return (await load()).transactions.filter(t => t.member_id === memberId).sort((a, b) => b.id - a.id).slice(0, 20);
+export async function getMemberTransactions(memberId: string): Promise<Transaction[]> {
+  const db = await readDB();
+  return db.transactions
+    .filter((t) => t.memberId === memberId)
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 }
 
-export async function createTransaction(memberId: number, type: "earn" | "redeem", amount: number, pointsDelta: number, rewardName: string | null, note: string | null): Promise<Transaction> {
-  const db = await load();
-  db._seq.transactions += 1;
-  const tx: Transaction = { id: db._seq.transactions, member_id: memberId, type, amount, points_delta: pointsDelta, reward_name: rewardName, note, created_at: now() };
-  db.transactions.push(tx);
-  await save(db);
-  return tx;
+// ─── Reward operations ────────────────────────────────────────────────────────
+
+export async function getActiveRewards(): Promise<Reward[]> {
+  const db = await readDB();
+  return db.rewards.filter((r) => r.active);
 }
 
-export async function findRedemptionByCode(code: string) {
-  const db = await load();
-  const tx = db.transactions.find(t => t.type === "redeem" && t.note && t.note.includes(code));
-  if (!tx) return undefined;
-  const member = db.members.find(m => m.id === tx.member_id);
-  return { ...tx, member_name: member?.name ?? "-", phone: member?.phone ?? "-" };
+export async function getRewardById(id: string): Promise<Reward | null> {
+  const db = await readDB();
+  return db.rewards.find((r) => r.id === id) ?? null;
 }
 
-export async function getRewards(includeInactive = false): Promise<Reward[]> {
-  const db = await load();
-  return db.rewards.filter(r => includeInactive || r.active === 1).sort((a, b) => a.points_required - b.points_required);
+// ─── Redeem code operations ───────────────────────────────────────────────────
+
+export async function createRedeemCode(
+  memberId: string,
+  rewardId: string,
+  rewardName: string,
+  pointsCost: number
+): Promise<RedeemCode> {
+  const db = await readDB();
+  const code = Math.random().toString(36).substring(2, 8).toUpperCase();
+  const redeemCode: RedeemCode = {
+    code,
+    memberId,
+    rewardId,
+    rewardName,
+    pointsCost,
+    used: false,
+    createdAt: new Date().toISOString(),
+  };
+  db.redeemCodes.push(redeemCode);
+  await writeDB(db);
+  return redeemCode;
 }
 
-export async function getRewardById(id: number): Promise<Reward | undefined> {
-  return (await load()).rewards.find(r => r.id === id);
+export async function getRedeemCode(code: string): Promise<RedeemCode | null> {
+  const db = await readDB();
+  return db.redeemCodes.find((rc) => rc.code === code) ?? null;
 }
 
-export async function createReward(name: string, description: string, pointsRequired: number): Promise<Reward> {
-  const db = await load();
-  db._seq.rewards += 1;
-  const reward: Reward = { id: db._seq.rewards, name, description, points_required: pointsRequired, active: 1 };
-  db.rewards.push(reward);
-  await save(db);
-  return reward;
+export async function markRedeemCodeUsed(code: string): Promise<void> {
+  const db = await readDB();
+  const idx = db.redeemCodes.findIndex((rc) => rc.code === code);
+  if (idx !== -1) {
+    db.redeemCodes[idx].used = true;
+    db.redeemCodes[idx].usedAt = new Date().toISOString();
+    await writeDB(db);
+  }
 }
 
-export async function updateReward(id: number, fields: Partial<Omit<Reward, "id">>): Promise<Reward> {
-  const db = await load();
-  const idx = db.rewards.findIndex(r => r.id === id);
-  if (idx < 0) throw new Error("Reward tidak ditemukan");
-  db.rewards[idx] = { ...db.rewards[idx], ...fields };
-  await save(db);
-  return db.rewards[idx];
+export async function getAllMembers(): Promise<Member[]> {
+  const db = await readDB();
+  return db.members;
+}
+
+export async function getSettings(): Promise<Settings> {
+  const db = await readDB();
+  return db.settings;
 }
