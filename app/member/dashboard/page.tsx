@@ -133,15 +133,24 @@ export default function MemberDashboard() {
           <div className="card">
             {history.length === 0 && <p className="muted">Belum ada transaksi.</p>}
             {Array.isArray(history) &&
-              history.map(tx => (
+              history
+                .filter(tx => tx?.created_at)
+                .map(tx => (
               <div key={tx.id} className="list-item">
                 <div>
                   <p style={{ margin: 0, fontWeight: 500 }}>
                     {tx.type === "earn" ? "Belanja di kasir" : `Tukar: ${tx.reward_name}`}
                   </p>
                   <p className="muted" style={{ margin: 0 }}>
-                    {new Date(tx.created_at.replace(" ", "T") + "Z").toLocaleString("id-ID", { dateStyle: "medium", timeStyle: "short" })}
-                    {tx.type === "earn" && ` · Rp${tx.amount.toLocaleString("id-ID")}`}
+                    {tx.created_at
+                      ? new Date(tx.created_at).toLocaleString("id-ID", {
+                          dateStyle: "medium",
+                          timeStyle: "short",
+                        })
+                      : "-"}
+
+                    {tx.type === "earn" &&
+                      ` · Rp${tx.amount.toLocaleString("id-ID")}`}
                   </p>
                 </div>
                 <p className="mono" style={{ margin: 0, fontWeight: 600, color: tx.points_delta >= 0 ? "#3d5e30" : "var(--otoko-red)" }}>
