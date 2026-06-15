@@ -77,8 +77,14 @@ export async function POST(req: NextRequest) {
     staffNote: "Transaksi POS",
   });
 
+  const finalMember = updated ?? {
+    ...member,
+    points: (member.points || 0) + pointsEarned,
+    stampCount: newStamp,
+  };
+
   return NextResponse.json({
-    member: updated,
+    member: finalMember,
     pointsEarned,
   });
 }

@@ -186,6 +186,7 @@ export async function getMemberByPhone(phone: string): Promise<Member | null> {
 
 export async function createMember(phone: string, name: string): Promise<Member> {
   const db = await readDB();
+  const id = nextId(db, "m");
   const member: Member = {
     id,
     phone,
